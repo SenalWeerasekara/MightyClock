@@ -1,6 +1,7 @@
 #include <Adafruit_NeoPixel.h>
 #include <ESP8266WiFi.h>
 #include <WiFiManager.h>
+#include <NTPClient.h>
 
 
 // #define LED_PIN 2  // change later this is for internal LED so it might freak out!
@@ -10,6 +11,17 @@
 #define NUM_LEDS (NUM_ROWS * NUM_COLS)
 #define MODE_BTN    12    // GPIO12  D6
 #define INC_BTN     14   // GPIO14  D5 
+
+
+// Create custom parameters
+WiFiManagerParameter tzHoursParam("tzHours", "Timezone Hours (e.g. 5 or -5)", "5", 3);
+WiFiManagerParameter tzMinutesParam("tzMinutes", "Timezone Minutes (e.g. 30)", "30", 3);
+
+int timezoneHours = 0;
+int timezoneMinutes = 0;
+
+// Define UDP instance
+WiFiUDP ntpUDP;
 
 
 Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
@@ -130,6 +142,7 @@ const int WBOX[][2] = {{0,2},{0,3},{0,4},{1,2},{1,4},{2,2},{2,3},{2,4}};
 enum Mode { CLOCK_MODE, FONT_COLOR_MODE, BG_COLOR_MODE,  WIFI_MODE };
 Mode currentMode = CLOCK_MODE;
 
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 0); // Use 0 offset initially, set later
 
 // Thing that lights up the actual LEDs as words
 #define LIGHT_WORD(coords, color) lightWord(coords, sizeof(coords)/sizeof(coords[0]), color)
@@ -145,6 +158,8 @@ void setup() {
   strip.begin();     
   strip.show();  
 
+
+
   WiFiManager wm;
   pinMode(MODE_BTN, INPUT_PULLUP);
   pinMode(INC_BTN, INPUT_PULLUP);
@@ -152,6 +167,8 @@ void setup() {
   // Automatically connect or start config portal
   LIGHT_WORD(W, strip.Color(0, 200, 0));
   strip.show();
+  wm.addParameter(&tzHoursParam);
+  wm.addParameter(&tzMinutesParam);
   bool res = wm.autoConnect("MightyClock");
 
   if (!res) {
@@ -165,6 +182,17 @@ void setup() {
     strip.clear();
     delay(1000);
   }
+
+   // Read saved values from custom parameters
+  timezoneHours = atoi(tzHoursParam.getValue());
+  timezoneMinutes = atoi(tzMinutesParam.getValue());
+
+  long utcOffsetInSeconds = timezoneHours * 3600 + timezoneMinutes * 60;
+  timeClient.setTimeOffset(utcOffsetInSeconds);
+
+    // Initialize NTP client
+  timeClient.begin();
+  timeClient.update();
   // startUpAnimation(wordColor); 
 
 }
@@ -321,8 +349,17 @@ void handleWifiReset() {
 }
 
 
+unsigned long previousNtpUpdate = 0;
+const unsigned long ntpUpdateInterval = 10000; // 10 seconds
 
 void loop() {
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousNtpUpdate >= ntpUpdateInterval) {
+    previousNtpUpdate = currentMillis;
+    timeClient.update();
+    hours = timeClient.getHours();
+    minutes = timeClient.getMinutes();
+  }
 
  
   handleModeButton();
