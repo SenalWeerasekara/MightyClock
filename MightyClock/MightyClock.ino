@@ -54,7 +54,10 @@ bool lastIncBtnState = HIGH;
 // For tracking elapsed time
 unsigned long previousMillis = 0;
 const unsigned long interval = 1000; // 1 second
-
+int brightness = 100;
+int brightnessLevels[] = {255, 200, 150, 100, 50, 20};
+int currentBrightnessIndex = 0;
+int brightnessCount = sizeof(brightnessLevels) / sizeof(brightnessLevels[0]);
 
 uint32_t colors[] = {
   strip.Color(8, 8, 8),      // Very soft grey  
@@ -156,6 +159,7 @@ const int WBOX[][2] = {{2,0},{3,0},{4,0},{2,1},{4,1},{2,2},{3,2},{4,2}};
 const int LARGEWBOX[][2] = {{2,0},{3,0},{4,0},{2,1},{4,1},{2,2},{3,2},{4,2}};
 const int LARGEW[][2] = {{0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{5,1},{4,2},{5,3},{6,4},{5,4},{4,4},{3,4},{2,4},{1,4},{0,4}};
 const int LARGEF[][2] = {{0,7},{1,7},{2,7},{3,7},{4,7},{5,7},{6,7},{0,7},{0,8},{0,9},{0,10},{0,11},{3,8},{3,9},{3,10}};
+const int BRIGHTICON[][2] = {{3,7},{2,8},{1,9},{2,10},{3,11},{4,10},{5,9},{4,8},{2,9},{3,8},{4,9},{3,10},{3,9}};
 
 enum Mode { CLOCK_MODE, FONT_COLOR_MODE, BG_COLOR_MODE,  WIFI_MODE, BRIGHTNESS_MODE };
 Mode currentMode = CLOCK_MODE;
@@ -321,6 +325,62 @@ void handleFontColorChange() {
   }
 }
 
+void handleBrightnessChange() {
+  if (digitalRead(incButtonPin) == LOW) {
+    delay(200); // debounce
+    currentBrightnessIndex = (currentBrightnessIndex + 1) % brightnessCount;
+    strip.setBrightness(brightnessLevels[currentBrightnessIndex]);
+    strip.show(); // apply brightness
+    saveBrightnessConfig(); // save to flash
+  }
+}
+
+void saveBrightnessConfig() {
+  DynamicJsonDocument doc(128);
+  doc["currentBrightnessIndex"] = currentBrightnessIndex;
+
+  File configFile = LittleFS.open("/brightness.json", "w");
+  if (!configFile) {
+    Serial.println("Failed to open brightness config file for writing");
+    return;
+  }
+
+  if (serializeJson(doc, configFile) == 0) {
+    Serial.println("Failed to write to brightness config file");
+  } else {
+    Serial.println("Brightness configuration saved.");
+  }
+  configFile.close();
+}
+
+bool loadBrightnessConfig() {
+  File configFile = LittleFS.open("/brightness.json", "r");
+  if (!configFile) {
+    Serial.println("Failed to open brightness config file. Using default brightness...");
+    currentBrightnessIndex = 0;
+    strip.setBrightness(brightnessLevels[currentBrightnessIndex]);
+    saveBrightnessConfig();
+    return false;
+  }
+
+  DynamicJsonDocument doc(128);
+  DeserializationError error = deserializeJson(doc, configFile);
+  configFile.close();
+
+  if (error) {
+    Serial.println("Failed to read brightness config. Using default.");
+    currentBrightnessIndex = 0;
+    strip.setBrightness(brightnessLevels[currentBrightnessIndex]);
+    saveBrightnessConfig();
+    return false;
+  }
+
+  currentBrightnessIndex = doc["currentBrightnessIndex"] | 0;
+  strip.setBrightness(brightnessLevels[currentBrightnessIndex]);
+  Serial.println("Brightness configuration loaded.");
+  return true;
+}
+
 
 
 void saveConfig() {
@@ -394,8 +454,9 @@ bool loadConfig() {
 
 
 void setup() {
-  strip.setBrightness(10);
+
   strip.begin();
+  loadBrightnessConfig(); 
   strip.show();
 
   // Initialize LittleFS filesystem
@@ -686,9 +747,9 @@ void loop() {
     handleWifiReset();
     strip.show();
   }else if (currentMode == BRIGHTNESS_MODE){
-    LIGHT_WORD(LARGEF, textColor);
-    LIGHT_WORD(LARGEW, textColor);
-    // handleWifiReset();
+    LIGHT_WORD(B, textColor);
+    LIGHT_WORD(BRIGHTICON, textColor);
+    handleBrightnessChange();
     strip.show();
   }
 }
