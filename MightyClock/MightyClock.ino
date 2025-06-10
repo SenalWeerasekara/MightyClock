@@ -152,9 +152,12 @@ const int B[][2] = {{0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{3,1},{3,2},{3,3},
 const int C[][2] = {{0,9},{0,10},{0,11},{1,8},{2,7},{3,7},{4,7},{5,8},{6,9},{6,10},{6,11}};
 const int F[][2] = {{0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{0,0},{0,1},{0,2},{0,3},{0,4},{3,0},{3,1},{3,2},{3,3}};
 const int W[][2] = {{3,1}};
-const int WBOX[][2] = {{0,2},{0,3},{0,4},{1,2},{1,4},{2,2},{2,3},{2,4}};
+const int WBOX[][2] = {{2,0},{3,0},{4,0},{2,1},{4,1},{2,2},{3,2},{4,2}};
+const int LARGEWBOX[][2] = {{2,0},{3,0},{4,0},{2,1},{4,1},{2,2},{3,2},{4,2}};
+const int LARGEW[][2] = {{0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{5,1},{4,2},{5,3},{6,4},{5,4},{4,4},{3,4},{2,4},{1,4},{0,4}};
+const int LARGEF[][2] = {{0,7},{1,7},{2,7},{3,7},{4,7},{5,7},{6,7},{0,7},{0,8},{0,9},{0,10},{0,11},{3,8},{3,9},{3,10}};
 
-enum Mode { CLOCK_MODE, FONT_COLOR_MODE, BG_COLOR_MODE,  WIFI_MODE };
+enum Mode { CLOCK_MODE, FONT_COLOR_MODE, BG_COLOR_MODE,  WIFI_MODE, BRIGHTNESS_MODE };
 Mode currentMode = CLOCK_MODE;
 
 NTPClient timeClient(ntpUDP, "pool.ntp.org", 0); // Use 0 offset initially, set later
@@ -167,6 +170,62 @@ void lightWord(const int coords[][2], int length, uint32_t color) {
     strip.setPixelColor(index, color);
   }
 }
+
+
+int XY(int x, int y) {
+  if (y % 2 == 0) {
+    return y * 12 + x;           // even row → left to right
+  } else {
+    return y * 12 + (11 - x);    // odd row → right to left
+  }
+}
+
+
+uint32_t scaleColor(uint32_t color, uint8_t scale) {
+  uint8_t r = (color >> 16) & 0xFF;
+  uint8_t g = (color >> 8) & 0xFF;
+  uint8_t b = color & 0xFF;
+
+  r = (r * scale) / 255;
+  g = (g * scale) / 255;
+  b = (b * scale) / 255;
+
+  return strip.Color(r, g, b);
+}
+
+void expandFromWithFade(int cx, int cy, uint32_t color, int ringDelay = 100, int fadeSteps = 20, int holdTime = 500) {
+  // Grow outward rings
+  for (int r = 0; r < 12; r++) {
+    for (int y = 0; y < 12; y++) {
+      for (int x = 0; x < 12; x++) {
+        int dx = abs(x - cx);
+        int dy = abs(y - cy);
+        if (max(dx, dy) == r) {
+          strip.setPixelColor(XY(x, y), color);
+        }
+      }
+    }
+    strip.show();
+    delay(ringDelay);  // delay between each ring expansion
+  }
+
+  delay(holdTime); // 👈 hold full expansion before fade-out
+
+  // Fade out
+  for (int f = fadeSteps; f >= 0; f--) {
+    uint8_t scale = map(f, 0, fadeSteps, 0, 255);
+    for (int i = 0; i < strip.numPixels(); i++) {
+      uint32_t c = strip.getPixelColor(i);
+      if (c != 0) {
+        strip.setPixelColor(i, scaleColor(c, scale));
+      }
+    }
+    strip.show();
+    delay(ringDelay/2);
+  }
+}
+
+
 
 
 void saveColorConfig() {
@@ -335,6 +394,7 @@ bool loadConfig() {
 
 
 void setup() {
+  strip.setBrightness(10);
   strip.begin();
   strip.show();
 
@@ -370,12 +430,11 @@ void setup() {
   wm.addParameter(&tzMinutesParam);
 
   // Automatically connect or start config portal
-  LIGHT_WORD(W, strip.Color(0, 200, 0)); // Indicate starting WiFi connection
+  LIGHT_WORD(W, strip.Color(200, 100, 0)); // Indicate starting WiFi connection
   strip.show();
   bool res = wm.autoConnect("MightyClock");
 
   if (!res) {
-    Serial.println("Failed to connect to WiFi or configure. Restarting...");
     LIGHT_WORD(W, strip.Color(200, 0, 0)); // Red W for failure
     strip.show();
     delay(3000);
@@ -383,7 +442,12 @@ void setup() {
   } else {
     LIGHT_WORD(W, strip.Color(0, 0, 200)); // Blue W for success
     strip.show();
-    delay(1000);
+    delay(1000);                              // Rainbow effect
+
+// expandFrom(1, 3, strip.Color(0, 0, 100)); 
+    // expandFadeCircular(1, 3, bgColor, 100); 
+  
+  expandFromWithFade(1, 3, bgColor, 80, 30, 2000); // blue, 1s hold before fade
     strip.clear(); // Clear the W after successful connection
 
     int newTzHours = atoi(tzHoursParam.getValue());
@@ -402,7 +466,6 @@ void setup() {
   // Initialize NTP client
   timeClient.begin();
 
-  LIGHT_WORD(WBOX, strip.Color(0, 50, 0)); // Indicate waiting for time, maybe a pulsing box
   strip.show();
   unsigned long startSyncMillis = millis();
   const unsigned long syncTimeout = 15000; // 15 seconds timeout for NTP sync
@@ -554,6 +617,7 @@ void handleModeButton() {
     else if (currentMode == BG_COLOR_MODE) currentMode = FONT_COLOR_MODE;
     else if (currentMode == BG_COLOR_MODE) currentMode = FONT_COLOR_MODE;
     else if (currentMode == FONT_COLOR_MODE) currentMode = WIFI_MODE;
+    else if (currentMode == WIFI_MODE) currentMode = BRIGHTNESS_MODE;
     else currentMode = CLOCK_MODE;
   }
 }
@@ -570,10 +634,12 @@ void handleIncrementButton(int &value, int maxValue) {
 void handleWifiReset() {
   if (digitalRead(incButtonPin) == LOW) {
     delay(200); // basic debounce
-    LIGHT_WORD(W, strip.Color(200, 50, 0));
+    
     WiFiManager wm;
     wm.resetSettings(); 
-    LIGHT_WORD(WBOX, strip.Color(100, 100, 200));
+    LIGHT_WORD(BGLETTERS, strip.Color(200, 0, 0));
+    LIGHT_WORD(SEMORA, strip.Color(200, 0, 0));
+    strip.show();
   }
 }
 
@@ -598,11 +664,6 @@ void loop() {
     clockWords();
     strip.show();
 
-  // } else if (currentMode == SET_TIME_MINUTE) {
-  //   LIGHT_WORD(M, wordColor);
-  //   showNumber(minutes);
-  //   // handleIncrementButton(minutes, 59); // 0-59
-
   } else if (currentMode == BG_COLOR_MODE){
     LIGHT_WORD(B, textColor);
     LIGHT_WORD(C, textColor);
@@ -620,8 +681,14 @@ void loop() {
     handleFontColorChange();
     // handleFontColorChange();
   } else if (currentMode == WIFI_MODE){
-    LIGHT_WORD(W, textColor);
+    LIGHT_WORD(LARGEF, textColor);
+    LIGHT_WORD(LARGEW, textColor);
     handleWifiReset();
+    strip.show();
+  }else if (currentMode == BRIGHTNESS_MODE){
+    LIGHT_WORD(LARGEF, textColor);
+    LIGHT_WORD(LARGEW, textColor);
+    // handleWifiReset();
     strip.show();
   }
 }
