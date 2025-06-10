@@ -2,6 +2,9 @@
 #include <ESP8266WiFi.h>
 #include <WiFiManager.h>
 #include <NTPClient.h>
+#include <FS.h>       // For LittleFS (or SPIFFS)
+#include <LittleFS.h> // Explicitly include LittleFS
+#include <ArduinoJson.h> // For JSON serialization/deserialization
 
 
 // #define LED_PIN 2  // change later this is for internal LED so it might freak out!
@@ -11,7 +14,19 @@
 #define NUM_LEDS (NUM_ROWS * NUM_COLS)
 #define MODE_BTN    12    // GPIO12  D6
 #define INC_BTN     14   // GPIO14  D5 
+#define CONFIG_FILE "/config.json" 
+#define COLOR_CONFIG_FILE "/color_config.json" 
 
+const int modeButtonPin = 12;
+const int incButtonPin = 14;
+
+struct Config {
+  int timezoneHours;
+  int timezoneMinutes;
+  // Add any other settings you want to save here (e.g., currentFontColorIndex, currentColorIndex)
+};
+
+Config settings;
 
 // Create custom parameters
 WiFiManagerParameter tzHoursParam("tzHours", "Timezone Hours (e.g. 5 or -5)", "5", 3);
@@ -154,49 +169,264 @@ void lightWord(const int coords[][2], int length, uint32_t color) {
 }
 
 
+void saveColorConfig() {
+  DynamicJsonDocument doc(128); // Smaller document size is fine for just two ints
+  doc["currentColorIndex"] = currentColorIndex;
+  doc["currentFontColorIndex"] = currentFontColorIndex;
+
+  File configFile = LittleFS.open(COLOR_CONFIG_FILE, "w");
+  if (!configFile) {
+    Serial.println("Failed to open color config file for writing");
+    return;
+  }
+
+  if (serializeJson(doc, configFile) == 0) {
+    Serial.println("Failed to write to color config file");
+  } else {
+    Serial.println("Color configuration saved.");
+  }
+  configFile.close();
+}
+
+// Function to load color configuration from LittleFS
+bool loadColorConfig() {
+  File configFile = LittleFS.open(COLOR_CONFIG_FILE, "r");
+  if (!configFile) {
+    Serial.println("Failed to open color config file for reading. Creating default color configuration...");
+    // If file doesn't exist, set default values
+    currentColorIndex = 0; // Default background color index
+    currentFontColorIndex = 0; // Default font color index
+    saveColorConfig(); // Save these defaults
+    return false; // Indicate that defaults were loaded/created
+  }
+
+  size_t size = configFile.size();
+  if (size > 256) { // Safety check for large file, adjust if needed
+    Serial.println("Color config file size is too large");
+    configFile.close();
+    return false;
+  }
+
+  DynamicJsonDocument doc(128); // Must match size used in saveColorConfig()
+  DeserializationError error = deserializeJson(doc, configFile);
+  configFile.close();
+
+  if (error) {
+    Serial.print(F("Failed to read color file, using default color configuration: "));
+    Serial.println(error.c_str());
+    // In case of error, load defaults
+    currentColorIndex = 0;
+    currentFontColorIndex = 0;
+    saveColorConfig(); // Save these defaults
+    return false;
+  }
+
+  currentColorIndex = doc["currentColorIndex"] | 0; // Use | 0 to provide a default if key is missing
+  currentFontColorIndex = doc["currentFontColorIndex"] | 0;
+
+  Serial.println("Color configuration loaded.");
+  return true;
+}
+
+void setColor(int index) {
+  bgColor = colors[index];         // Update bgColor with the new color
+  strip.setPixelColor(0, bgColor); // Example: setting pixel 0 to bgColor
+  strip.show();
+  // --- OLD: writeColorIndexToRTC(index, SRAM_ADDR_COLOR_BG);
+  currentColorIndex = index; // Update the global index
+  saveColorConfig();         // Save the updated color settings
+}
+
+void setColorFont(int index) {
+  wordColor = colorsFont[index];       // Update wordColor with the new color
+  strip.setPixelColor(0, wordColor);   // Example: setting pixel 0 to wordColor
+  strip.show();
+  // --- OLD: writeColorIndexToRTC(index, SRAM_ADDR_COLOR_FONT);
+  currentFontColorIndex = index; // Update the global index
+  saveColorConfig();             // Save the updated color settings
+}
+
+void handleColorChange() {
+  if (digitalRead(incButtonPin) == LOW) {
+    delay(200);
+    currentColorIndex = (currentColorIndex + 1) % colorCount;
+    setColor(currentColorIndex);
+  }
+}
+
+void handleFontColorChange() {
+  if (digitalRead(incButtonPin) == LOW) {
+    delay(200);
+    currentFontColorIndex = (currentFontColorIndex + 1) % fontColorCount;
+    setColorFont(currentFontColorIndex);
+  }
+}
+
+
+
+void saveConfig() {
+  DynamicJsonDocument doc(256);
+  doc["timezoneHours"] = settings.timezoneHours;
+  doc["timezoneMinutes"] = settings.timezoneMinutes;
+
+  File configFile = LittleFS.open(CONFIG_FILE, "w"); // Open file in write mode
+  if (!configFile) {
+    Serial.println("Failed to open config file for writing");
+    return;
+  }
+
+  // Serialize JSON to file. Check if writing was successful.
+  if (serializeJson(doc, configFile) == 0) {
+    Serial.println("Failed to write to config file");
+  } else {
+    Serial.println("Configuration saved.");
+  }
+  configFile.close(); // Always close the file
+}
+
+// Function to load configuration from LittleFS
+bool loadConfig() {
+  File configFile = LittleFS.open(CONFIG_FILE, "r"); // Open file in read mode
+  if (!configFile) {
+    Serial.println("Failed to open config file for reading. Creating default configuration...");
+    // If the file doesn't exist, set default values and save them
+    settings.timezoneHours = 0;
+    settings.timezoneMinutes = 0;
+    // Set defaults for other settings if you add them:
+    // settings.fontColorIndex = 0;
+    // settings.bgColorIndex = 0;
+    saveConfig(); // Save these default settings
+    return false; // Indicate that defaults were loaded/created
+  }
+
+  // Check file size to prevent potential memory issues if the file is too large
+  size_t size = configFile.size();
+  if (size > 512) { // You can adjust this max size as needed
+    Serial.println("Config file size is too large");
+    configFile.close();
+    return false;
+  }
+
+  // Deserialize JSON from file
+  DynamicJsonDocument doc(256); // Must match the size used in saveConfig()
+  DeserializationError error = deserializeJson(doc, configFile);
+  configFile.close(); // Close the file immediately after reading
+
+  if (error) {
+    Serial.print(F("Failed to read config file, using default configuration: "));
+    Serial.println(error.c_str());
+    // In case of a parsing error, load defaults
+    settings.timezoneHours = 0;
+    settings.timezoneMinutes = 0;
+    saveConfig(); // Save these default settings
+    return false;
+  }
+
+  // Extract values from the JSON document
+  settings.timezoneHours = doc["timezoneHours"];
+  settings.timezoneMinutes = doc["timezoneMinutes"];
+  // If you add more settings, load them here:
+  // settings.fontColorIndex = doc["fontColorIndex"] | 0; // The | 0 provides a default if key is missing
+  // settings.bgColorIndex = doc["bgColorIndex"] | 0;
+
+  Serial.println("Configuration loaded.");
+  return true; // Indicate that config was successfully loaded
+}
+
+
 void setup() {
-  strip.begin();     
-  strip.show();  
+  strip.begin();
+  strip.show();
 
+  // Initialize LittleFS filesystem
+  if (!LittleFS.begin()) {
+    LittleFS.format(); // This will erase all files on LittleFS if it's the first time or corrupted
+    if (!LittleFS.begin()) {
+      delay(3000);
+      ESP.restart();
+    }
+  }
 
+  // Load configuration (timezone, etc.) from LittleFS
+  loadConfig(); // This will load existing settings or create/save defaults
+  loadColorConfig(); 
+  bgColor = colors[currentColorIndex];
+  wordColor = colorsFont[currentFontColorIndex];
 
   WiFiManager wm;
   pinMode(MODE_BTN, INPUT_PULLUP);
   pinMode(INC_BTN, INPUT_PULLUP);
 
-  // Automatically connect or start config portal
-  LIGHT_WORD(W, strip.Color(0, 200, 0));
-  strip.show();
+  // Set WiFiManager parameters with the currently loaded/default settings
+  char tzHoursStr[4];
+  sprintf(tzHoursStr, "%d", settings.timezoneHours);
+  tzHoursParam.setValue(tzHoursStr, 4);
+
+  char tzMinutesStr[4];
+  sprintf(tzMinutesStr, "%d", settings.timezoneMinutes);
+  tzMinutesParam.setValue(tzMinutesStr, 4);
+
   wm.addParameter(&tzHoursParam);
   wm.addParameter(&tzMinutesParam);
+
+  // Automatically connect or start config portal
+  LIGHT_WORD(W, strip.Color(0, 200, 0)); // Indicate starting WiFi connection
+  strip.show();
   bool res = wm.autoConnect("MightyClock");
 
   if (!res) {
-    LIGHT_WORD(W, strip.Color(200, 0, 0));
+    Serial.println("Failed to connect to WiFi or configure. Restarting...");
+    LIGHT_WORD(W, strip.Color(200, 0, 0)); // Red W for failure
     strip.show();
     delay(3000);
     ESP.restart();
-  }else if (res) {
-    LIGHT_WORD(W, strip.Color(0, 0, 200));
+  } else {
+    LIGHT_WORD(W, strip.Color(0, 0, 200)); // Blue W for success
     strip.show();
-    strip.clear();
     delay(1000);
+    strip.clear(); // Clear the W after successful connection
+
+    int newTzHours = atoi(tzHoursParam.getValue());
+    int newTzMinutes = atoi(tzMinutesParam.getValue());
+
+    if (newTzHours != settings.timezoneHours || newTzMinutes != settings.timezoneMinutes) {
+      settings.timezoneHours = newTzHours;
+      settings.timezoneMinutes = newTzMinutes;
+      saveConfig(); // Save the newly configured values to LittleFS
+    }
   }
 
-   // Read saved values from custom parameters
-  timezoneHours = atoi(tzHoursParam.getValue());
-  timezoneMinutes = atoi(tzMinutesParam.getValue());
-
-  long utcOffsetInSeconds = timezoneHours * 3600 + timezoneMinutes * 60;
+  // Set the NTP client time offset using the (loaded or newly configured) timezone values
+  long utcOffsetInSeconds = settings.timezoneHours * 3600 + settings.timezoneMinutes * 60;
   timeClient.setTimeOffset(utcOffsetInSeconds);
-
-    // Initialize NTP client
+  // Initialize NTP client
   timeClient.begin();
-  timeClient.update();
-  // startUpAnimation(wordColor); 
 
+  LIGHT_WORD(WBOX, strip.Color(0, 50, 0)); // Indicate waiting for time, maybe a pulsing box
+  strip.show();
+  unsigned long startSyncMillis = millis();
+  const unsigned long syncTimeout = 15000; // 15 seconds timeout for NTP sync
+
+  // Keep updating NTP client until time is valid or timeout occurs
+  while (!timeClient.update()) {
+    timeClient.forceUpdate(); // Request an update if the previous one wasn't complete
+    delay(500); // Wait a bit before trying again
+    if (millis() - startSyncMillis > syncTimeout) {
+      // Optionally, show an error state or proceed with default time (00:00)
+      // or restart
+      break; // Exit the loop if timeout occurs
+    }
+    // You could also add some animation here to indicate waiting
+  }
+  strip.clear();
+  strip.show();
+  Serial.println("NTP time synchronized!");
+
+  hours = timeClient.getHours();
+  minutes = timeClient.getMinutes();
+
+  // startUpAnimation(wordColor);
 }
-
 
 
 int getLEDIndex(int row, int col) {
@@ -312,8 +542,7 @@ void clearMatrix() {
 unsigned long lastDebounce = 0;
 bool lastButtonState = HIGH;
 
-const int modeButtonPin = 12;
-const int incButtonPin = 14;
+
 
 // Handle mode changes
 void handleModeButton() {
@@ -380,6 +609,7 @@ void loop() {
     LIGHT_WORD(SEMORA, wordColor);
     LIGHT_WORD(BGLETTERS, bgColor);
     strip.show();
+    handleColorChange();
     // handleColorChange();
   } else if (currentMode == FONT_COLOR_MODE){
     LIGHT_WORD(F, textColor);
@@ -387,6 +617,7 @@ void loop() {
     LIGHT_WORD(SEMORA, wordColor);
     LIGHT_WORD(BGLETTERS, bgColor);
     strip.show();
+    handleFontColorChange();
     // handleFontColorChange();
   } else if (currentMode == WIFI_MODE){
     LIGHT_WORD(W, textColor);
