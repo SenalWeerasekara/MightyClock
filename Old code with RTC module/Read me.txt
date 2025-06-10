@@ -1,0 +1,18 @@
+Note: This Code is Deprecated and No Longer Maintained
+
+This code was originally written for interfacing with an RTC (Real-Time Clock) module such as the DS3231. The module was intended to manage timekeeping and store configuration data.
+
+However, due to hardware issues with the specific RTC module used, the decision has been made to discontinue support for this implementation. Instead, the ESP8266's built-in Wi-Fi capability will be used to fetch accurate time from internet-based NTP servers.
+
+Reasons for the Switch
+
+Advantages of RTC Modules:
+Operates independently without internet connectivity
+Simplified time setting and configuration
+
+Advantages of Wi-Fi-Based Timekeeping:
+Lower cost (no need for an external RTC module)
+Eliminates the need for battery replacements
+Automatically adjusts for daylight saving time and time zones
+
+For better reliability and ease of maintenance, please refer to the updated version of the code that utilizes Wi-Fi for time synchronization.
