@@ -462,7 +462,6 @@ bool loadConfig() {
 
 
 void setup() {
-
   // Initialize LittleFS filesystem
   if (!LittleFS.begin()) {
     LittleFS.format(); // This will erase all files on LittleFS if it's the first time or corrupted
