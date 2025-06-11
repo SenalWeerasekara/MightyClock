@@ -55,7 +55,7 @@ bool lastIncBtnState = HIGH;
 unsigned long previousMillis = 0;
 const unsigned long interval = 1000; // 1 second
 int brightness = 100;
-int brightnessLevels[] = {255, 200, 150, 100, 50, 20};
+int brightnessLevels[] = {254, 255, 210, 180, 130, 90, 60, 30};
 int currentBrightnessIndex = 0;
 int brightnessCount = sizeof(brightnessLevels) / sizeof(brightnessLevels[0]);
 
@@ -160,6 +160,14 @@ const int LARGEWBOX[][2] = {{2,0},{3,0},{4,0},{2,1},{4,1},{2,2},{3,2},{4,2}};
 const int LARGEW[][2] = {{0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{5,1},{4,2},{5,3},{6,4},{5,4},{4,4},{3,4},{2,4},{1,4},{0,4}};
 const int LARGEF[][2] = {{0,7},{1,7},{2,7},{3,7},{4,7},{5,7},{6,7},{0,7},{0,8},{0,9},{0,10},{0,11},{3,8},{3,9},{3,10}};
 const int BRIGHTICON[][2] = {{3,7},{2,8},{1,9},{2,10},{3,11},{4,10},{5,9},{4,8},{2,9},{3,8},{4,9},{3,10},{3,9}};
+
+// const int ONE1[][2] = {{3,1}};
+const int TWO2[][2] = {{3,1}};
+const int THREE3[][2] = {{3,1}};
+const int FOUR4[][2] = {{3,1}};
+const int FIVE5[][2] = {{3,1}};
+
+const int AUTO[][2] = {{5,7},{5,11},{4,7},{4,11},{3,7},{3,11},{2,8},{2,10},{1,9}};
 
 enum Mode { CLOCK_MODE, FONT_COLOR_MODE, BG_COLOR_MODE,  WIFI_MODE, BRIGHTNESS_MODE };
 Mode currentMode = CLOCK_MODE;
@@ -455,10 +463,6 @@ bool loadConfig() {
 
 void setup() {
 
-  strip.begin();
-  loadBrightnessConfig(); 
-  strip.show();
-
   // Initialize LittleFS filesystem
   if (!LittleFS.begin()) {
     LittleFS.format(); // This will erase all files on LittleFS if it's the first time or corrupted
@@ -467,6 +471,10 @@ void setup() {
       ESP.restart();
     }
   }
+
+  strip.begin();
+  loadBrightnessConfig(); 
+  strip.show();
 
   // Load configuration (timezone, etc.) from LittleFS
   loadConfig(); // This will load existing settings or create/save defaults
@@ -628,23 +636,13 @@ const byte font3x5[10][7] = {
   {0b111, 0b101, 0b111, 0b001, 0b111}  // 9
 };
 
-void showNumber(int num, int offsetX = 3, int offsetY = 3, uint32_t color = strip.Color(255, 255, 255)) {
-  int tens = num / 10;
-  int ones = num % 10;
+void showNumber(int digit, int offsetX = 1, int offsetY = 8, uint32_t color = strip.Color(255, 255, 255)) {
+  if (digit < 0 || digit > 9) return; // Only support digits 0-9
 
-  // Width is 5 pixels (x from 0 to 4)
   for (int x = 0; x < 5; x++) {
-    // Height is 3 pixels (y from 0 to 2)
     for (int y = 0; y < 3; y++) {
-      // Tens digit on top at (offsetX + x, offsetY + y)
-      if (font3x5[tens][x] & (1 << (2 - y))) {
+      if (font3x5[digit][x] & (1 << (2 - y))) {
         int index = getLEDIndex(offsetX + x, offsetY + y);
-        strip.setPixelColor(index, color);
-      }
-
-      // Ones digit below tens, so offset Y by 4 (3 pixels + 1 pixel space)
-      if (font3x5[ones][x] & (1 << (2 - y))) {
-        int index = getLEDIndex(offsetX + x, offsetY + 4 + y);
         strip.setPixelColor(index, color);
       }
     }
@@ -748,9 +746,28 @@ void loop() {
     strip.show();
   }else if (currentMode == BRIGHTNESS_MODE){
     LIGHT_WORD(B, textColor);
-    LIGHT_WORD(BRIGHTICON, textColor);
+    LIGHT_WORD(SEMORA, textColor);
+    if (brightnessLevels[currentBrightnessIndex] == 254){
+      LIGHT_WORD(AUTO, strip.Color(0, 0, 200));
+    } else {
+      showNumber(brightnessCount - currentBrightnessIndex);
+    }
     handleBrightnessChange();
     strip.show();
+  }
+
+  if(brightnessLevels[currentBrightnessIndex] == 254){
+    if(hours >= 0 && hours <= 6 ){ // Midnight to 6 in the morning
+      strip.setBrightness(50);
+    } else if(hours >= 7 && hours <= 10 ){ // Midnight to 6 in the morning
+       strip.setBrightness(180);
+    } else if (hours >= 11 && hours <= 17 ){ // Midnight to 6 in the morning
+       strip.setBrightness(240);
+    } else if (hours >= 18 && hours <= 20 ){ // Midnight to 6 in the morning
+       strip.setBrightness(150);
+    } else if (hours >= 21 && hours <= 24 ){ // Midnight to 6 in the morning
+       strip.setBrightness(100);
+    }
   }
 }
 
@@ -852,7 +869,7 @@ void clockWords(){
     LIGHT_WORD(FIVE1, wordColor);
     LIGHT_WORD(TO, wordColor);
   }
-  if(minutes > 54 || minutes<3){
+  if(minutes > 57 || minutes<3){
     LIGHT_WORD(OCLOCK, wordColor);
   }
 
