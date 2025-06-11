@@ -54,7 +54,10 @@ bool lastIncBtnState = HIGH;
 // For tracking elapsed time
 unsigned long previousMillis = 0;
 const unsigned long interval = 1000; // 1 second
-
+int brightness = 100;
+int brightnessLevels[] = {254, 255, 210, 180, 130, 90, 60, 30};
+int currentBrightnessIndex = 0;
+int brightnessCount = sizeof(brightnessLevels) / sizeof(brightnessLevels[0]);
 
 uint32_t colors[] = {
   strip.Color(8, 8, 8),      // Very soft grey  
@@ -152,9 +155,21 @@ const int B[][2] = {{0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{3,1},{3,2},{3,3},
 const int C[][2] = {{0,9},{0,10},{0,11},{1,8},{2,7},{3,7},{4,7},{5,8},{6,9},{6,10},{6,11}};
 const int F[][2] = {{0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{0,0},{0,1},{0,2},{0,3},{0,4},{3,0},{3,1},{3,2},{3,3}};
 const int W[][2] = {{3,1}};
-const int WBOX[][2] = {{0,2},{0,3},{0,4},{1,2},{1,4},{2,2},{2,3},{2,4}};
+const int WBOX[][2] = {{2,0},{3,0},{4,0},{2,1},{4,1},{2,2},{3,2},{4,2}};
+const int LARGEWBOX[][2] = {{2,0},{3,0},{4,0},{2,1},{4,1},{2,2},{3,2},{4,2}};
+const int LARGEW[][2] = {{0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{5,1},{4,2},{5,3},{6,4},{5,4},{4,4},{3,4},{2,4},{1,4},{0,4}};
+const int LARGEF[][2] = {{0,7},{1,7},{2,7},{3,7},{4,7},{5,7},{6,7},{0,7},{0,8},{0,9},{0,10},{0,11},{3,8},{3,9},{3,10}};
+const int BRIGHTICON[][2] = {{3,7},{2,8},{1,9},{2,10},{3,11},{4,10},{5,9},{4,8},{2,9},{3,8},{4,9},{3,10},{3,9}};
 
-enum Mode { CLOCK_MODE, FONT_COLOR_MODE, BG_COLOR_MODE,  WIFI_MODE };
+// const int ONE1[][2] = {{3,1}};
+const int TWO2[][2] = {{3,1}};
+const int THREE3[][2] = {{3,1}};
+const int FOUR4[][2] = {{3,1}};
+const int FIVE5[][2] = {{3,1}};
+
+const int AUTO[][2] = {{5,7},{5,11},{4,7},{4,11},{3,7},{3,11},{2,8},{2,10},{1,9}};
+
+enum Mode { CLOCK_MODE, FONT_COLOR_MODE, BG_COLOR_MODE,  WIFI_MODE, BRIGHTNESS_MODE };
 Mode currentMode = CLOCK_MODE;
 
 NTPClient timeClient(ntpUDP, "pool.ntp.org", 0); // Use 0 offset initially, set later
@@ -167,6 +182,62 @@ void lightWord(const int coords[][2], int length, uint32_t color) {
     strip.setPixelColor(index, color);
   }
 }
+
+
+int XY(int x, int y) {
+  if (y % 2 == 0) {
+    return y * 12 + x;           // even row → left to right
+  } else {
+    return y * 12 + (11 - x);    // odd row → right to left
+  }
+}
+
+
+uint32_t scaleColor(uint32_t color, uint8_t scale) {
+  uint8_t r = (color >> 16) & 0xFF;
+  uint8_t g = (color >> 8) & 0xFF;
+  uint8_t b = color & 0xFF;
+
+  r = (r * scale) / 255;
+  g = (g * scale) / 255;
+  b = (b * scale) / 255;
+
+  return strip.Color(r, g, b);
+}
+
+void expandFromWithFade(int cx, int cy, uint32_t color, int ringDelay = 100, int fadeSteps = 20, int holdTime = 500) {
+  // Grow outward rings
+  for (int r = 0; r < 12; r++) {
+    for (int y = 0; y < 12; y++) {
+      for (int x = 0; x < 12; x++) {
+        int dx = abs(x - cx);
+        int dy = abs(y - cy);
+        if (max(dx, dy) == r) {
+          strip.setPixelColor(XY(x, y), color);
+        }
+      }
+    }
+    strip.show();
+    delay(ringDelay);  // delay between each ring expansion
+  }
+
+  delay(holdTime); // 👈 hold full expansion before fade-out
+
+  // Fade out
+  for (int f = fadeSteps; f >= 0; f--) {
+    uint8_t scale = map(f, 0, fadeSteps, 0, 255);
+    for (int i = 0; i < strip.numPixels(); i++) {
+      uint32_t c = strip.getPixelColor(i);
+      if (c != 0) {
+        strip.setPixelColor(i, scaleColor(c, scale));
+      }
+    }
+    strip.show();
+    delay(ringDelay/2);
+  }
+}
+
+
 
 
 void saveColorConfig() {
@@ -262,6 +333,62 @@ void handleFontColorChange() {
   }
 }
 
+void handleBrightnessChange() {
+  if (digitalRead(incButtonPin) == LOW) {
+    delay(200); // debounce
+    currentBrightnessIndex = (currentBrightnessIndex + 1) % brightnessCount;
+    strip.setBrightness(brightnessLevels[currentBrightnessIndex]);
+    strip.show(); // apply brightness
+    saveBrightnessConfig(); // save to flash
+  }
+}
+
+void saveBrightnessConfig() {
+  DynamicJsonDocument doc(128);
+  doc["currentBrightnessIndex"] = currentBrightnessIndex;
+
+  File configFile = LittleFS.open("/brightness.json", "w");
+  if (!configFile) {
+    Serial.println("Failed to open brightness config file for writing");
+    return;
+  }
+
+  if (serializeJson(doc, configFile) == 0) {
+    Serial.println("Failed to write to brightness config file");
+  } else {
+    Serial.println("Brightness configuration saved.");
+  }
+  configFile.close();
+}
+
+bool loadBrightnessConfig() {
+  File configFile = LittleFS.open("/brightness.json", "r");
+  if (!configFile) {
+    Serial.println("Failed to open brightness config file. Using default brightness...");
+    currentBrightnessIndex = 0;
+    strip.setBrightness(brightnessLevels[currentBrightnessIndex]);
+    saveBrightnessConfig();
+    return false;
+  }
+
+  DynamicJsonDocument doc(128);
+  DeserializationError error = deserializeJson(doc, configFile);
+  configFile.close();
+
+  if (error) {
+    Serial.println("Failed to read brightness config. Using default.");
+    currentBrightnessIndex = 0;
+    strip.setBrightness(brightnessLevels[currentBrightnessIndex]);
+    saveBrightnessConfig();
+    return false;
+  }
+
+  currentBrightnessIndex = doc["currentBrightnessIndex"] | 0;
+  strip.setBrightness(brightnessLevels[currentBrightnessIndex]);
+  Serial.println("Brightness configuration loaded.");
+  return true;
+}
+
 
 
 void saveConfig() {
@@ -335,9 +462,6 @@ bool loadConfig() {
 
 
 void setup() {
-  strip.begin();
-  strip.show();
-
   // Initialize LittleFS filesystem
   if (!LittleFS.begin()) {
     LittleFS.format(); // This will erase all files on LittleFS if it's the first time or corrupted
@@ -346,6 +470,10 @@ void setup() {
       ESP.restart();
     }
   }
+
+  strip.begin();
+  loadBrightnessConfig(); 
+  strip.show();
 
   // Load configuration (timezone, etc.) from LittleFS
   loadConfig(); // This will load existing settings or create/save defaults
@@ -370,12 +498,11 @@ void setup() {
   wm.addParameter(&tzMinutesParam);
 
   // Automatically connect or start config portal
-  LIGHT_WORD(W, strip.Color(0, 200, 0)); // Indicate starting WiFi connection
+  LIGHT_WORD(W, strip.Color(200, 100, 0)); // Indicate starting WiFi connection
   strip.show();
   bool res = wm.autoConnect("MightyClock");
 
   if (!res) {
-    Serial.println("Failed to connect to WiFi or configure. Restarting...");
     LIGHT_WORD(W, strip.Color(200, 0, 0)); // Red W for failure
     strip.show();
     delay(3000);
@@ -383,7 +510,12 @@ void setup() {
   } else {
     LIGHT_WORD(W, strip.Color(0, 0, 200)); // Blue W for success
     strip.show();
-    delay(1000);
+    delay(1000);                              // Rainbow effect
+
+// expandFrom(1, 3, strip.Color(0, 0, 100)); 
+    // expandFadeCircular(1, 3, bgColor, 100); 
+  
+  expandFromWithFade(1, 3, bgColor, 80, 30, 2000); // blue, 1s hold before fade
     strip.clear(); // Clear the W after successful connection
 
     int newTzHours = atoi(tzHoursParam.getValue());
@@ -402,7 +534,6 @@ void setup() {
   // Initialize NTP client
   timeClient.begin();
 
-  LIGHT_WORD(WBOX, strip.Color(0, 50, 0)); // Indicate waiting for time, maybe a pulsing box
   strip.show();
   unsigned long startSyncMillis = millis();
   const unsigned long syncTimeout = 15000; // 15 seconds timeout for NTP sync
@@ -504,23 +635,13 @@ const byte font3x5[10][7] = {
   {0b111, 0b101, 0b111, 0b001, 0b111}  // 9
 };
 
-void showNumber(int num, int offsetX = 3, int offsetY = 3, uint32_t color = strip.Color(255, 255, 255)) {
-  int tens = num / 10;
-  int ones = num % 10;
+void showNumber(int digit, int offsetX = 1, int offsetY = 8, uint32_t color = strip.Color(255, 255, 255)) {
+  if (digit < 0 || digit > 9) return; // Only support digits 0-9
 
-  // Width is 5 pixels (x from 0 to 4)
   for (int x = 0; x < 5; x++) {
-    // Height is 3 pixels (y from 0 to 2)
     for (int y = 0; y < 3; y++) {
-      // Tens digit on top at (offsetX + x, offsetY + y)
-      if (font3x5[tens][x] & (1 << (2 - y))) {
+      if (font3x5[digit][x] & (1 << (2 - y))) {
         int index = getLEDIndex(offsetX + x, offsetY + y);
-        strip.setPixelColor(index, color);
-      }
-
-      // Ones digit below tens, so offset Y by 4 (3 pixels + 1 pixel space)
-      if (font3x5[ones][x] & (1 << (2 - y))) {
-        int index = getLEDIndex(offsetX + x, offsetY + 4 + y);
         strip.setPixelColor(index, color);
       }
     }
@@ -554,6 +675,7 @@ void handleModeButton() {
     else if (currentMode == BG_COLOR_MODE) currentMode = FONT_COLOR_MODE;
     else if (currentMode == BG_COLOR_MODE) currentMode = FONT_COLOR_MODE;
     else if (currentMode == FONT_COLOR_MODE) currentMode = WIFI_MODE;
+    else if (currentMode == WIFI_MODE) currentMode = BRIGHTNESS_MODE;
     else currentMode = CLOCK_MODE;
   }
 }
@@ -570,10 +692,12 @@ void handleIncrementButton(int &value, int maxValue) {
 void handleWifiReset() {
   if (digitalRead(incButtonPin) == LOW) {
     delay(200); // basic debounce
-    LIGHT_WORD(W, strip.Color(200, 50, 0));
+    
     WiFiManager wm;
     wm.resetSettings(); 
-    LIGHT_WORD(WBOX, strip.Color(100, 100, 200));
+    LIGHT_WORD(BGLETTERS, strip.Color(200, 0, 0));
+    LIGHT_WORD(SEMORA, strip.Color(200, 0, 0));
+    strip.show();
   }
 }
 
@@ -598,11 +722,6 @@ void loop() {
     clockWords();
     strip.show();
 
-  // } else if (currentMode == SET_TIME_MINUTE) {
-  //   LIGHT_WORD(M, wordColor);
-  //   showNumber(minutes);
-  //   // handleIncrementButton(minutes, 59); // 0-59
-
   } else if (currentMode == BG_COLOR_MODE){
     LIGHT_WORD(B, textColor);
     LIGHT_WORD(C, textColor);
@@ -620,9 +739,34 @@ void loop() {
     handleFontColorChange();
     // handleFontColorChange();
   } else if (currentMode == WIFI_MODE){
-    LIGHT_WORD(W, textColor);
+    LIGHT_WORD(LARGEF, textColor);
+    LIGHT_WORD(LARGEW, textColor);
     handleWifiReset();
     strip.show();
+  }else if (currentMode == BRIGHTNESS_MODE){
+    LIGHT_WORD(B, textColor);
+    LIGHT_WORD(SEMORA, textColor);
+    if (brightnessLevels[currentBrightnessIndex] == 254){
+      LIGHT_WORD(AUTO, strip.Color(0, 0, 200));
+    } else {
+      showNumber(brightnessCount - currentBrightnessIndex);
+    }
+    handleBrightnessChange();
+    strip.show();
+  }
+
+  if(brightnessLevels[currentBrightnessIndex] == 254){
+    if(hours >= 0 && hours <= 6 ){ // Midnight to 6 in the morning
+      strip.setBrightness(50);
+    } else if(hours >= 7 && hours <= 10 ){ // Midnight to 6 in the morning
+       strip.setBrightness(180);
+    } else if (hours >= 11 && hours <= 17 ){ // Midnight to 6 in the morning
+       strip.setBrightness(240);
+    } else if (hours >= 18 && hours <= 20 ){ // Midnight to 6 in the morning
+       strip.setBrightness(150);
+    } else if (hours >= 21 && hours <= 24 ){ // Midnight to 6 in the morning
+       strip.setBrightness(100);
+    }
   }
 }
 
@@ -724,7 +868,7 @@ void clockWords(){
     LIGHT_WORD(FIVE1, wordColor);
     LIGHT_WORD(TO, wordColor);
   }
-  if(minutes > 54 || minutes<3){
+  if(minutes > 57 || minutes<3){
     LIGHT_WORD(OCLOCK, wordColor);
   }
 
